@@ -4,6 +4,11 @@ import tempfile
 import os
 import re
 import requests
+from pydantic import BaseModel
+
+class PageData(BaseModel):
+    page: int
+    text: str
 
 def extract_arxiv_id(url: str) -> str:
     # Handles URLs
@@ -39,7 +44,7 @@ def save_pdf(pdf_bytes: bytes, tmp_dir: str) -> str:
         f.write(pdf_bytes)
     return pdf_path
 
-def extract_text(pdf_bytes: bytes) -> list[dict]:
+def extract_text(pdf_bytes: bytes) -> list[PageData]:
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Save PDF to a temp folder
@@ -64,7 +69,7 @@ def extract_text(pdf_bytes: bytes) -> list[dict]:
         raise RuntimeError(f"Failed to extract text from PDF: {e}")
 
 
-def fetch_paper(url: str) -> list[dict]:
+def fetch_paper(url: str) -> tuple[arxiv.Result, list[PageData]]:
     try:
         arxiv_id = extract_arxiv_id(url)
         print(f"Fetching paper: {arxiv_id}")
