@@ -244,7 +244,7 @@ def fetch_paper(url: str) -> tuple[arxiv.Result, list[SectionData]]:
         if html:
             sections = parse_sections_from_html(html)
             print(f"Extracted {len(sections)} sections from HTML")
-            return metadata, sections
+            return metadata, sections, arxiv_id
 
         raise RuntimeError(
             "HTML version not available for this paper. "
