@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from embedder import query
+from embedder import query, get_abstract
 from openai import OpenAI
 from embedder import QueryResult
 import json
@@ -51,6 +51,13 @@ def build_confidence(results: QueryResult) -> str:
 
 def answer(question: str, arxiv_id: str) -> dict:
     results = query(question, arxiv_id, n_results=5)
+
+    # Always include abstract in context
+    abstract_chunks = get_abstract(arxiv_id)
+    existing_text =  {c.text for c in results.chunks}
+    for chunk in abstract_chunks:
+        if chunk.text not in existing_text:
+            results.chunks.insert(0, chunk)
 
     # debug
     print("\nRetrieved chunks:")

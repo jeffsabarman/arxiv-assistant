@@ -91,6 +91,29 @@ def query(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult:
 
     return QueryResult(chunks=chunks)
 
+def get_abstract(arxiv_id: str) -> ChunkResult | None:
+    collection = get_collection(arxiv_id)
+    results = collection.get(
+        where={"section_name": "Abstract"}
+    )
+
+    if not results["documents"]:
+        return []
+
+    chunks = []
+    for doc, meta in zip(results["documents"], results["metadatas"]):
+        typed_meta = ChunkMetadata(**meta)
+        chunks.append(ChunkResult(
+            text=doc,
+            section_number=typed_meta.section_number,
+            section_name=typed_meta.section_name,
+            parent_section=typed_meta.parent_section,
+            distance=0.0
+
+        ))
+
+    return chunks
+
 if __name__ == "__main__":
     from paper import fetch_paper
     from chunker import chunk_sections
