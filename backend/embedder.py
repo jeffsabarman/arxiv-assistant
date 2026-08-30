@@ -1,9 +1,30 @@
 import chromadb
 from chromadb.utils import embedding_functions
 from chunker import ChunkData
+from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 load_dotenv()
+
+class ChunkMetadata(BaseModel):
+    section_number: str
+    section_name: str
+    parent_section: str
+
+class ChunkResult(BaseModel):
+    text: str
+    section_number: str
+    section_name: str
+    parent_section: str
+    distance: float
+
+    def format_section(self) -> str:
+        section = f"{self.section_number} {self.section_name}".strip()
+        parent = f" (under {self.parent_section})" if self.parent_section else ""
+        return f"{section}{parent}"
+
+class QueryResult(BaseModel):
+    chunks: list[ChunkResult]
 
 # Initialise ChromaDB client
 chroma_client = chromadb.Client()
@@ -27,11 +48,11 @@ def embed_chunks(chunks: list[ChunkData], arxiv_id: str) -> None:
     ids = [str(chunk.chunk_index) for chunk in chunks]
     documents = [chunk.text for chunk in chunks]
     metadatas = [
-        {
-            "section_number": chunk.section_number,
-            "section_name": chunk.section_name,
-            "parent_section": chunk.parent_section
-        }
+        ChunkMetadata(
+            section_number=chunk.section_number,
+            section_name=chunk.section_name,
+            parent_section=chunk.parent_section
+        ).model_dump()
         for chunk in chunks
     ]
 
@@ -44,15 +65,31 @@ def embed_chunks(chunks: list[ChunkData], arxiv_id: str) -> None:
 
     print(f"Stored {len(chunks)} chunks in ChormaDB")
 
-def query(question: str, arxiv_id: str, n_results: int = 5):
+def query(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult:
     collection = get_collection(arxiv_id)
 
     results = collection.query(
         query_texts=[question],
-        n_results=n_results
+        n_results=n_results,
+        include=["documents", "metadatas", "distances"]
     )
 
-    return results
+    chunks = []
+    for doc, meta, distance in zip(
+        results["documents"][0],
+        results["metadatas"][0],
+        results["distances"][0]
+    ):
+        typed_meta = ChunkMetadata(**meta) # converts dict back to Pydantic
+        chunks.append(ChunkResult(
+            text=doc,
+            section_number=typed_meta.section_number,
+            section_name=typed_meta.section_name,
+            parent_section=typed_meta.parent_section,
+            distance=distance
+        ))
+
+    return QueryResult(chunks=chunks)
 
 if __name__ == "__main__":
     from paper import fetch_paper
