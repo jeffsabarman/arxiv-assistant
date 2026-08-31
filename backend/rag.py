@@ -27,6 +27,15 @@ Always respond in this JSON format:
     "section": "section name"
 }"""
 
+REWRITE_QUERY_SYSTEM_PROMPT = """Generate 3 different versions of the given question to improve academic paper retrieval.
+Use different vocabulary and phrasing but keep the same meaning.
+Use keywords and terminology from the provided abstract to make the queries more specific to this paper.
+
+Respond in this exact JSON format:
+{
+    "queries": ["version 1", "version 2", "version 3"]
+}"""
+
 def build_context(results: QueryResult) -> str:
     """Format retreived chunks into a context string for the LLM"""
     context_parts = []
@@ -49,8 +58,56 @@ def build_confidence(results: QueryResult) -> str:
         # return f"{avg_distance} low"
         return f"low"
 
+def rewrite_query(question: str, abstract: str = "") -> list[str]:
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=200,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            { "role": "system", "content": REWRITE_QUERY_SYSTEM_PROMPT },
+            { 
+                "role": "user",
+                "content": f"""Paper abstract:
+{abstract}
+
+Question to rewrite: {question}"""
+            }, 
+        ]
+    )
+
+    try:
+        parsed = json.loads(response.choices[0].message.content)
+        return [question] + parsed["queries"]
+    except Exception:
+        return [question]
+
+def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult:
+    # Get abstract text for query rewriting context
+    abstract_chunks = get_abstract(arxiv_id)
+    abstract_text = " ".join([c.text for c in abstract_chunks])
+
+    queries = rewrite_query(question, abstract=abstract_text)
+    print(f"Rewritten queries: {queries}")
+
+    seen_texts = set()
+    all_chunks = []
+
+    for q in queries:
+        results = query(q, arxiv_id, n_results=n_results)
+        for chunk in results.chunks:
+            if chunk.text not in seen_texts:
+                seen_texts.add(chunk.text)
+                all_chunks.append(chunk)
+
+    all_chunks.sort(key=lambda c: c.distance)
+    return QueryResult(chunks=all_chunks[:n_results])
+
+
+
 def answer(question: str, arxiv_id: str) -> dict:
-    results = query(question, arxiv_id, n_results=5)
+    # results = query(question, arxiv_id, n_results=5)
+    results = query_multi(question, arxiv_id, n_results=5)
 
     # Always include abstract in context
     abstract_chunks = get_abstract(arxiv_id)
@@ -78,6 +135,7 @@ def answer(question: str, arxiv_id: str) -> dict:
         model="gpt-4o",
         max_tokens=1000,
         temperature=0,
+        response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -93,15 +151,7 @@ Question: {question}"""
 
     try:
         answer_text = response.choices[0].message.content
-        # print(f"Type: {type(answer_text)}")
-        # print(f"Length: {len(answer_text) if answer_text else 'None'}")
-        # print(repr(answer_text[:100]) if answer_text else "EMPTY")
-        # print(answer_text, "<< raw response")
-        start = answer_text.index("{")
-        end = answer_text.rindex("}") + 1
-        parsed = json.loads(answer_text[start:end])
-        # parsed = json.loads(answer_text)
-        # print(parsed, "<<< parsed")
+        parsed = json.loads(answer_text)
     except json.JSONDecodeError as e:
         print(f"JSON error: {e}")  # add this
         return {
