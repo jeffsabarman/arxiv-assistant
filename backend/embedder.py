@@ -26,8 +26,8 @@ class ChunkResult(BaseModel):
 class QueryResult(BaseModel):
     chunks: list[ChunkResult]
 
-# Initialise ChromaDB client
-chroma_client = chromadb.Client()
+# Initialise ChromaDB
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
 # OpenAI embedding function
 openai_ef = embedding_functions.OpenAIEmbeddingFunction(
@@ -43,6 +43,10 @@ def get_collection(arxiv_id: str):
 
 def embed_chunks(chunks: list[ChunkData], arxiv_id: str) -> None:
     collection = get_collection(arxiv_id)
+
+    if collection.count() > 0:
+        print(f"Paper already embedded, skipping. ({collection.count()} chunks)")
+        return
 
     # Prepare data for ChromaDB
     ids = [str(chunk.chunk_index) for chunk in chunks]
@@ -131,8 +135,6 @@ if __name__ == "__main__":
     results = query(question, arxiv_id)
 
     print("\nTop results:")
-    for i, (doc, meta) in enumerate(zip(results["documents"][0], results["metadatas"][0])):
-        section = f"{meta['section_number']} {meta['section_name']}".strip()
-        parent = f" (under {meta['parent_section']})" if meta['parent_section'] else ""
-        print(f"\n--- Result {i+1}: {section}{parent} ---")
-        print(doc[:300])
+    for i, chunk in enumerate(results.chunks):
+        print(f"\n--- Result {i+1}: {chunk.format_section()} ---")
+        print(chunk.text[:300])
