@@ -176,6 +176,46 @@ Question: {question}"""
         "confidence": confidence
     }
 
+def generate_summary(arxiv_id: str) -> str:
+    result = answer(
+        "Summarise this paper as: one sentence TL;DR, the problem it solves, the approach, and the key findings.",
+        arxiv_id
+    )
+    return result["answer"]
+
+# TODO: user able to add the default question or instruction after upload and question answerd after each upload
+def generate_suggested_questions(arxiv_id: str) -> list[str]:
+    abstract_chunks = get_abstract(arxiv_id)
+    abstract_text = " ".join([c.text for c in abstract_chunks])
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=300,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": """Generate 4 interesting questions that can be answered from this paper.
+Focus on methodology, results, and key contributions.
+Respond in this exact JSON format:
+{
+    "questions": ["question 1", "question 2", "question 3", "question 4"]
+}"""
+            },
+            {
+                "role": "user",
+                "content": f"Paper abstract: {abstract_text}"
+            }
+        ]
+    )
+
+    try:
+        parsed = json.loads(response.choices[0].message.content)
+        return parsed["questions"]
+    except Exception:
+        return []
+
 if __name__ == "__main__":
     from paper import fetch_paper
     from chunker import chunk_sections
@@ -186,20 +226,30 @@ if __name__ == "__main__":
     chunks = chunk_sections(sections)
     embed_chunks(chunks, arxiv_id)
 
-    # Test questions
-    questions = [
-        "How does the attention mechanism work?",
-        "What datasets were used for training?",
-        "What are the limitations of this model?",
-        "What is the meaning of life?",  # should get "I can't find this"
-        "What's the paper about?"
-    ]
+    # # Test questions
+    # questions = [
+    #     "How does the attention mechanism work?",
+    #     "What datasets were used for training?",
+    #     "What are the limitations of this model?",
+    #     "What is the meaning of life?",  # should get "I can't find this"
+    #     "What's the paper about?"
+    # ]
 
-    for question in questions:
-        print(f"\nQ: {question}")
-        result = answer(question, arxiv_id)
-        print(f"Confidence: {result['confidence']}")
-        print(f"A: {result['answer'][:500]}")
-        if result['source']:
-            print(f"Source: {result['source']['section']}")
-            print(f"Quote: {result['source']['passage'][:200]}")
+    # for question in questions:
+    #     print(f"\nQ: {question}")
+    #     result = answer(question, arxiv_id)
+    #     print(f"Confidence: {result['confidence']}")
+    #     print(f"A: {result['answer'][:500]}")
+    #     if result['source']:
+    #         print(f"Source: {result['source']['section']}")
+    #         print(f"Quote: {result['source']['passage'][:200]}")
+
+
+    print("\n--- Summary ---")
+    summary = generate_summary(arxiv_id)
+    print(summary)
+
+    print("\n--- Suggested Questions ---")
+    questions = generate_suggested_questions(arxiv_id)
+    for q in questions:
+        print(f"- {q}")
