@@ -4,6 +4,7 @@ from embedder import query, get_abstract
 from openai import OpenAI
 from embedder import QueryResult
 import json
+from schemas_model import (AnswerResponse, SourceResponse, Citation)
 
 load_dotenv()
 
@@ -14,17 +15,19 @@ SYSTEM_PROMPT = """You are a research assistant that answers questions about aca
 Rules:
 - Answer ONLY from the provided context chunks
 - If the answer is not in the context, set found to false
-- Always cite the section your answer comes from
-- Quote the exact passage that supports your answer
+- Synthesise information from multiple sections when relevant
+- Cite ALL sections your answer draws from
+- Only cite Abstract if no other section covers the question
 - Be precise and concise
-- Pay attention to whether the context is describing the paper's own model or other models being compared
 
-Always respond in this JSON format:
+Respond in this exact JSON format with no markdown:
 {
     "found": true or false,
     "answer": "your answer here",
-    "quote": "exact passage from context",
-    "section": "section name"
+    "citations": [
+        {"quote": "exact passage", "section": "3.2.1 Scaled Dot-Product Attention"},
+        {"quote": "another passage", "section": "3.2.2 Multi-Head Attention"}
+    ]
 }"""
 
 REWRITE_QUERY_SYSTEM_PROMPT = """Generate 3 different versions of the given question to improve academic paper retrieval.
@@ -105,7 +108,7 @@ def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult
 
 
 
-def answer(question: str, arxiv_id: str) -> dict:
+def answer(question: str, arxiv_id: str, history: list[dict] = []) -> AnswerResponse:
     # results = query(question, arxiv_id, n_results=5)
     results = query_multi(question, arxiv_id, n_results=5)
 
@@ -114,7 +117,7 @@ def answer(question: str, arxiv_id: str) -> dict:
     existing_text =  {c.text for c in results.chunks}
     for chunk in abstract_chunks:
         if chunk.text not in existing_text:
-            results.chunks.insert(0, chunk)
+            results.chunks.append(chunk)
 
     # debug
     print("\nRetrieved chunks:")
@@ -122,12 +125,12 @@ def answer(question: str, arxiv_id: str) -> dict:
         print(f"  {chunk.format_section()} | distance: {chunk.distance:.3f}")
 
     if not results.chunks:
-        return {
-            "answer": "I couldn't find any relevant content in this paper.",
-            "source": None,
-            "confidence": "low"
-        }
-
+        return AnswerResponse(
+            answer="I couldn't find any relevant content in this paper.",
+            source=None,
+            confidence="low"
+        )
+    
     context = build_context(results)
     confidence = build_confidence(results)
 
@@ -138,6 +141,7 @@ def answer(question: str, arxiv_id: str) -> dict:
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
+            *history, # inject conversation history
             {
                 "role": "user",
                 "content": f"""Context from the paper:
@@ -150,6 +154,7 @@ Question: {question}"""
     )
 
     try:
+        # TODO: make it as a type
         answer_text = response.choices[0].message.content
         parsed = json.loads(answer_text)
     except json.JSONDecodeError as e:
@@ -167,21 +172,23 @@ Question: {question}"""
             "confidence": "low"
         }
 
-    return {
-        "answer": parsed["answer"],
-        "source": {
-            "section": parsed["section"],
-            "passage": parsed["quote"]
-        },
-        "confidence": confidence
-    }
+    return AnswerResponse(
+        answer=parsed["answer"],
+        source=SourceResponse(
+            citations=[
+                Citation(quote=c["quote"], section=c["section"])
+                for c in parsed["citations"]
+            ]
+        ),
+        confidence=confidence
+    )
 
 def generate_summary(arxiv_id: str) -> str:
     result = answer(
         "Summarise this paper as: one sentence TL;DR, the problem it solves, the approach, and the key findings.",
         arxiv_id
     )
-    return result["answer"]
+    return result.answer
 
 # TODO: user able to add the default question or instruction after upload and question answerd after each upload
 def generate_suggested_questions(arxiv_id: str) -> list[str]:
