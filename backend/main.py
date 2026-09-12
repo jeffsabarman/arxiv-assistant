@@ -5,7 +5,7 @@ import os
 
 from paper import fetch_paper
 from chunker import chunk_sections
-from embedder import embed_chunks, get_abstract
+from embedder import embed_chunks
 from rag import answer, generate_summary, generate_suggested_questions
 
 from schemas_model import (

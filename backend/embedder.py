@@ -112,8 +112,7 @@ def get_abstract(arxiv_id: str) -> ChunkResult | None:
             section_number=typed_meta.section_number,
             section_name=typed_meta.section_name,
             parent_section=typed_meta.parent_section,
-            distance=0.0
-
+            distance=-1.0 # sentinel: no distance available
         ))
 
     return chunks

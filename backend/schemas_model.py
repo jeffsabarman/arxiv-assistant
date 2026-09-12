@@ -26,7 +26,7 @@ class SourceResponse(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     source: SourceResponse | None
-    confidence: str
+    confidence: str | None
 
 class SessionResponse(BaseModel):
     arxiv_id: str | None
@@ -37,4 +37,9 @@ class SessionResponse(BaseModel):
 class AnswerResponse(BaseModel):
     answer: str
     source: SourceResponse | None
-    confidence: str
+    confidence: str | None
+
+class LLMAnswer(BaseModel):
+    found: bool
+    answer: str
+    citations: list[Citation]

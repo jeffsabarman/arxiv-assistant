@@ -4,7 +4,8 @@ from embedder import query, get_abstract
 from openai import OpenAI
 from embedder import QueryResult
 import json
-from schemas_model import (AnswerResponse, SourceResponse, Citation)
+from schemas_model import (AnswerResponse, SourceResponse, Citation, LLMAnswer)
+from pydantic import ValidationError
 
 load_dotenv()
 
@@ -14,7 +15,8 @@ SYSTEM_PROMPT = """You are a research assistant that answers questions about aca
 
 Rules:
 - Answer ONLY from the provided context chunks
-- If the answer is not in the context, set found to false
+- If the context contains relevant information to answer the question, set found to true
+- Only set found to false if the context has no relevant information at all
 - Synthesise information from multiple sections when relevant
 - Cite ALL sections your answer draws from
 - Only cite Abstract if no other section covers the question
@@ -25,8 +27,8 @@ Respond in this exact JSON format with no markdown:
     "found": true or false,
     "answer": "your answer here",
     "citations": [
-        {"quote": "exact passage", "section": "3.2.1 Scaled Dot-Product Attention"},
-        {"quote": "another passage", "section": "3.2.2 Multi-Head Attention"}
+        {"quote": "brief relevant excerpt from the context", "section": "3.2.1 Scaled Dot-Product Attention"},
+        {"quote": "brief relevant excerpt from the context", "section": "3.2.2 Multi-Head Attention"}
     ]
 }"""
 
@@ -48,17 +50,15 @@ def build_context(results: QueryResult) -> str:
     return "\n\n---\n\n".join(context_parts)
 
 def build_confidence(results: QueryResult) -> str:
-    if not results.chunks:
+    scored_chunks = [c for c in results.chunks if c.distance >= 0]
+    if not scored_chunks:
         return "unknown"
-    avg_distance = sum(c.distance for c in results.chunks) / len(results.chunks)
+    avg_distance = sum(c.distance for c in scored_chunks) / len(results.chunks)
     if avg_distance < 0.5:
-        # return f"{avg_distance} high"
         return f"high"
     elif avg_distance < 0.8:
-        # return f"{avg_distance} medium"
         return f"medium"
     else:
-        # return f"{avg_distance} low"
         return f"low"
 
 def rewrite_query(question: str, abstract: str = "") -> list[str]:
@@ -91,7 +91,6 @@ def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult
     abstract_text = " ".join([c.text for c in abstract_chunks])
 
     queries = rewrite_query(question, abstract=abstract_text)
-    print(f"Rewritten queries: {queries}")
 
     seen_texts = set()
     all_chunks = []
@@ -107,17 +106,19 @@ def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult
     return QueryResult(chunks=all_chunks[:n_results])
 
 
+RELEVANCE_THRESHOLD = 0.6
 
 def answer(question: str, arxiv_id: str, history: list[dict] = []) -> AnswerResponse:
     # results = query(question, arxiv_id, n_results=5)
     results = query_multi(question, arxiv_id, n_results=5)
 
-    # Always include abstract in context
-    abstract_chunks = get_abstract(arxiv_id)
-    existing_text =  {c.text for c in results.chunks}
-    for chunk in abstract_chunks:
-        if chunk.text not in existing_text:
-            results.chunks.append(chunk)
+    relevant = [c for c in results.chunks if c.distance < RELEVANCE_THRESHOLD]
+    if not relevant:
+        abstract_chunks = get_abstract(arxiv_id)
+        existing_text =  {c.text for c in results.chunks}
+        for chunk in abstract_chunks:
+            if chunk.text not in existing_text:
+                results.chunks.append(chunk)
 
     # debug
     print("\nRetrieved chunks:")
@@ -154,30 +155,29 @@ Question: {question}"""
     )
 
     try:
-        # TODO: make it as a type
         answer_text = response.choices[0].message.content
-        parsed = json.loads(answer_text)
-    except json.JSONDecodeError as e:
-        print(f"JSON error: {e}")  # add this
-        return {
-            "answer": "Failed to parse response.",
-            "source": None,
-            "confidence": "low"
-        }
+        llm = LLMAnswer.model_validate_json(answer_text)
+    except (json.JSONDecodeError, ValidationError) as e:
+        print(f"Parse error: {e}")
+        return AnswerResponse(
+            answer="Failed to parse response.",
+            source=None,
+            confidence=None
+        )
 
-    if not parsed.get("found"):
-        return {
-            "answer": "I can't find this in the paper.",
-            "source": None,
-            "confidence": "low"
-        }
+    if not llm.found:
+        return AnswerResponse(
+            answer="I can't find this in the paper.",
+            source=None,
+            confidence=None
+        )
 
     return AnswerResponse(
-        answer=parsed["answer"],
+        answer=llm.answer,
         source=SourceResponse(
             citations=[
-                Citation(quote=c["quote"], section=c["section"])
-                for c in parsed["citations"]
+                Citation(quote=c.quote, section=c.section)
+                for c in llm.citations
             ]
         ),
         confidence=confidence
@@ -233,23 +233,24 @@ if __name__ == "__main__":
     chunks = chunk_sections(sections)
     embed_chunks(chunks, arxiv_id)
 
-    # # Test questions
-    # questions = [
-    #     "How does the attention mechanism work?",
-    #     "What datasets were used for training?",
-    #     "What are the limitations of this model?",
-    #     "What is the meaning of life?",  # should get "I can't find this"
-    #     "What's the paper about?"
-    # ]
+    # Test questions
+    questions = [
+        "How does the attention mechanism work?",
+        "What datasets were used for training?",
+        "What are the limitations of this model?",
+        "What is the meaning of life?",  # should get "I can't find this"
+        "What's the paper about?"
+    ]
 
-    # for question in questions:
-    #     print(f"\nQ: {question}")
-    #     result = answer(question, arxiv_id)
-    #     print(f"Confidence: {result['confidence']}")
-    #     print(f"A: {result['answer'][:500]}")
-    #     if result['source']:
-    #         print(f"Source: {result['source']['section']}")
-    #         print(f"Quote: {result['source']['passage'][:200]}")
+    for question in questions:
+        print(f"\nQ: {question}")
+        result = answer(question, arxiv_id)
+        print(f"Confidence: {result.confidence}")
+        print(f"A: {result.answer[:500]}")
+        if result.source:
+            for c in result.source.citations:
+                print(f"Section: {c.section}")
+                print(f"Quote: {c.quote[:200]}")
 
 
     print("\n--- Summary ---")
