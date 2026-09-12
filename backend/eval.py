@@ -18,17 +18,11 @@ TEST_CASES = [
         "expected_found": True,
         "notes": "Explicitly mentioned in section 5.1"
     },
-    # still not working for limitation
-    # {
-    #     "question": "What are the limitations of this model?",
-    #     "expected_found": True,  # changed from False
-    #     "notes": "Implicit limitation mentioned in section 4 Why Self-Attention - performance degrades for very long sequences"
-    # },
-    # {
-    #     "question": "What are the limitations of the Transformer model presented in this paper?",
-    #     "expected_found": True,  # changed from False
-    #     "notes": "Implicit limitation mentioned in section 4 Why Self-Attention - performance degrades for very long sequences"
-    # },
+    {
+        "question": "What are the limitations of this model?",
+        "expected_found": True,
+        "notes": "Implicit limitation mentioned in section 4 Why Self-Attention - performance degrades for very long sequences"
+    },
     {
         "question": "What are the limitations of the Transformer model presented in this paper?",
         "expected_found": False,
@@ -66,7 +60,7 @@ def run_evals(arxiv_id: str):
 
     for i, case in enumerate(TEST_CASES):
         result = answer(case["question"], arxiv_id)
-        actual_found = result["source"] is not None
+        actual_found = result.source is not None
 
         success = actual_found == case["expected_found"]
 
@@ -79,10 +73,10 @@ def run_evals(arxiv_id: str):
 
         print(f"{status} [{i+1}/{len(TEST_CASES)}] {case['question']}")
         print(f"       Expected found: {case['expected_found']} | Actual found: {actual_found}")
-        print(f"       Confidence: {result['confidence']}")
+        print(f"       Confidence: {result.confidence}")
         if not success:
             print(f"       Note: {case['notes']}")
-            print(f"       Answer: {result['answer'][:200]}")
+            print(f"       Answer: {result.answer[:200]}")
         print()
 
     print(f"Results: {passed}/{len(TEST_CASES)} passed")
