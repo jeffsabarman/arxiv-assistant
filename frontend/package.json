@@ -13,6 +13,7 @@
     "@assistant-ui/react": "^0.15.19",
     "@assistant-ui/react-markdown": "^0.14.15",
     "@tailwindcss/typography": "^0.5.20",
+    "lucide-react": "^1.48.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -27,6 +28,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",
     "globals": "^17.12.0",
+    "prettier": "^3.9.8",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.69.0",
