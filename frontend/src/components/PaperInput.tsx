@@ -38,7 +38,7 @@ const PaperInput = ({ onSubmit, loading, error }: PaperInputProps) => {
           <button
             type="submit"
             disabled={loading || !url.trim()}
-            className="bg-black text-white rounded-lg px-4 py-3 text-sm font-medium disabled:opacity-50"
+            className="bg-black text-white rounded-lg px-4 py-3 text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-default"
           >
             {loading ? "Loading paper..." : "Load Paper"}
           </button>
