@@ -20,6 +20,7 @@ Rules:
 - Synthesise information from multiple sections when relevant
 - Cite ALL sections your answer draws from
 - Only cite Abstract if no other section covers the question
+- Use markdown formatting in your answer (bold for key terms, bullet points for lists)
 - Be precise and concise
 
 Respond in this exact JSON format with no markdown:
