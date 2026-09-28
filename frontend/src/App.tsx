@@ -28,11 +28,9 @@ const App = () => {
       </div>
 
       {/* Suggested questions */}
-      {messages.length === 0 && (
-        <SuggestedQuestions
-          suggestedQuestions={paper.suggested_questions}
-          submitQuestion={submitQuestion} />
-      )}
+      <SuggestedQuestions
+        suggestedQuestions={paper.suggested_questions}
+        submitQuestion={submitQuestion} />
 
       {/* Chat thread */}
       <div className="flex-1 overflow-y-auto">

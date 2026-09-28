@@ -1,3 +1,4 @@
+import Accordion from "./shared/Accordion"
 
 interface SuggestedQuestionsProps {
     suggestedQuestions: string[],
@@ -7,10 +8,11 @@ interface SuggestedQuestionsProps {
 const SuggestedQuestions = ({ suggestedQuestions, submitQuestion }: SuggestedQuestionsProps) => {
 
     return (
-        <div className="flex flex-col gap-2 py-6">
-            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+        <Accordion title={
+            <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">
                 Suggested questions
-            </p>
+            </span>
+        } defaultOpen={true}>
             <div className="flex flex-wrap gap-2">
                 {suggestedQuestions.map((q, i) => (
                     <button
@@ -22,7 +24,7 @@ const SuggestedQuestions = ({ suggestedQuestions, submitQuestion }: SuggestedQue
                     </button>
                 ))}
             </div>
-        </div>
+        </Accordion>
     )
 }
 
