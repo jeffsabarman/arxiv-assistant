@@ -10,7 +10,7 @@ interface HeaderProps {
 const Header = ({ paperTitle, paperSummary, reset }: HeaderProps) => {
 
     return (
-        <div className="flex items-center justify-between py-4 border-b-gray-200">
+        <div className="flex items-start justify-between py-4 border-b-gray-200">
             <Accordion
                 title={
                     <h1 className="font-semibold text-sm max-w-md text-left">{paperTitle}</h1>

@@ -9,11 +9,14 @@ const SuggestedQuestions = ({ suggestedQuestions, submitQuestion }: SuggestedQue
 
     return (
         <div className="pb-4">
-            <Accordion title={
-                <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">
-                    Suggested questions
-                </span>
-            } defaultOpen={true}>
+            <Accordion
+                title={
+                    <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+                        Suggested questions
+                    </span>
+                }
+                defaultOpen={true}
+            >
                 <div className="flex flex-wrap gap-2">
                     {suggestedQuestions.map((q, i) => (
                         <button
