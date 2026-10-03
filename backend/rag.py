@@ -1,15 +1,15 @@
 import os
 from dotenv import load_dotenv
 from embedder import query, get_abstract
-from openai import OpenAI
 from embedder import QueryResult
-import json
-from schemas_model import (AnswerResponse, SourceResponse, Citation, LLMAnswer)
-from pydantic import ValidationError
+from schemas_model import (AnswerResponse, SourceResponse, Citation, LLMAnswer, 
+                           RewrittenQueries, SuggestedQuestions)
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 
 load_dotenv()
 
-client = OpenAI()
+model = OpenAIChatModel("gpt-4o")
 
 SYSTEM_PROMPT = """You are a research assistant that answers questions about academic papers.
 
@@ -20,27 +20,28 @@ Rules:
 - Synthesise information from multiple sections when relevant
 - Cite ALL sections your answer draws from
 - Only cite Abstract if no other section covers the question
-- Use markdown formatting in your answer (bold for key terms, bullet points for lists)
 - Be precise and concise
 
-Respond in this exact JSON format with no markdown:
-{
-    "found": true or false,
-    "answer": "your answer here",
-    "citations": [
-        {"quote": "brief relevant excerpt from the context", "section": "3.2.1 Scaled Dot-Product Attention"},
-        {"quote": "brief relevant excerpt from the context", "section": "3.2.2 Multi-Head Attention"}
-    ]
-}"""
+Formatting rules:
+- Use bullet points or numbered lists for multiple points or findings
+- Use **bold** for key terms and concepts
+- Keep each bullet to 1-2 sentences max
+- Only use a paragraph if the answer is a single, simple point
+"""
+
+agent = Agent(
+    model,
+    output_type=LLMAnswer,
+    system_prompt=SYSTEM_PROMPT,
+    model_settings=OpenAIChatModelSettings(
+        max_tokens=1000,
+        temperature=0
+    )
+)
 
 REWRITE_QUERY_SYSTEM_PROMPT = """Generate 3 different versions of the given question to improve academic paper retrieval.
 Use different vocabulary and phrasing but keep the same meaning.
-Use keywords and terminology from the provided abstract to make the queries more specific to this paper.
-
-Respond in this exact JSON format:
-{
-    "queries": ["version 1", "version 2", "version 3"]
-}"""
+Use keywords and terminology from the provided abstract to make the queries more specific to this paper."""
 
 def build_context(results: QueryResult) -> str:
     """Format retreived chunks into a context string for the LLM"""
@@ -62,36 +63,27 @@ def build_confidence(results: QueryResult) -> str:
     else:
         return f"low"
 
-def rewrite_query(question: str, abstract: str = "") -> list[str]:
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        max_tokens=200,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            { "role": "system", "content": REWRITE_QUERY_SYSTEM_PROMPT },
-            { 
-                "role": "user",
-                "content": f"""Paper abstract:
+query_rewriter = Agent(
+    model,
+    output_type=RewrittenQueries,
+    system_prompt=REWRITE_QUERY_SYSTEM_PROMPT
+)
+
+async def rewrite_query(question: str, abstract: str = "") -> list[str]:
+    result = await query_rewriter.run(
+        f"""Paper abstract:
 {abstract}
 
 Question to rewrite: {question}"""
-            }, 
-        ]
     )
+    return [question] + result.output.queries
 
-    try:
-        parsed = json.loads(response.choices[0].message.content)
-        return [question] + parsed["queries"]
-    except Exception:
-        return [question]
-
-def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult:
+async def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult:
     # Get abstract text for query rewriting context
     abstract_chunks = get_abstract(arxiv_id)
     abstract_text = " ".join([c.text for c in abstract_chunks])
 
-    queries = rewrite_query(question, abstract=abstract_text)
+    queries = await rewrite_query(question, abstract=abstract_text)
 
     seen_texts = set()
     all_chunks = []
@@ -109,9 +101,8 @@ def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult
 
 RELEVANCE_THRESHOLD = 0.6
 
-def answer(question: str, arxiv_id: str, history: list[dict] = []) -> AnswerResponse:
-    # results = query(question, arxiv_id, n_results=5)
-    results = query_multi(question, arxiv_id, n_results=5)
+async def answer(question: str, arxiv_id: str, history: list[dict] = []) -> AnswerResponse:
+    results = await query_multi(question, arxiv_id, n_results=5)
 
     relevant = [c for c in results.chunks if c.distance < RELEVANCE_THRESHOLD]
     if not relevant:
@@ -136,35 +127,16 @@ def answer(question: str, arxiv_id: str, history: list[dict] = []) -> AnswerResp
     context = build_context(results)
     confidence = build_confidence(results)
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        max_tokens=1000,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *history, # inject conversation history
-            {
-                "role": "user",
-                "content": f"""Context from the paper:
+    result = await agent.run(
+        f"""Context from the paper:
 
 {context}
 
-Question: {question}"""
-            }
-        ]
+Question: {question}""",
+        message_history=history
     )
 
-    try:
-        answer_text = response.choices[0].message.content
-        llm = LLMAnswer.model_validate_json(answer_text)
-    except (json.JSONDecodeError, ValidationError) as e:
-        print(f"Parse error: {e}")
-        return AnswerResponse(
-            answer="Failed to parse response.",
-            source=None,
-            confidence=None
-        )
+    llm = result.output
 
     if not llm.found:
         return AnswerResponse(
@@ -184,45 +156,33 @@ Question: {question}"""
         confidence=confidence
     )
 
-def generate_summary(arxiv_id: str) -> str:
-    result = answer(
+async def generate_summary(arxiv_id: str) -> str:
+    result = await answer(
         "Summarise this paper as: one sentence TL;DR, the problem it solves, the approach, and the key findings.",
         arxiv_id
     )
     return result.answer
 
+suggested_questions_agent = Agent(
+    model,
+    output_type=SuggestedQuestions,
+    system_prompt="""Generate 4 interesting questions that can be answered from this paper.
+Focus on methodology, results, and key contributions.""",
+  model_settings=OpenAIChatModelSettings(
+        max_tokens=300,
+        temperature=0
+    )
+)
+
 # TODO: user able to add the default question or instruction after upload and question answerd after each upload
-def generate_suggested_questions(arxiv_id: str) -> list[str]:
+async def generate_suggested_questions(arxiv_id: str) -> list[str]:
     abstract_chunks = get_abstract(arxiv_id)
     abstract_text = " ".join([c.text for c in abstract_chunks])
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        max_tokens=300,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": """Generate 4 interesting questions that can be answered from this paper.
-Focus on methodology, results, and key contributions.
-Respond in this exact JSON format:
-{
-    "questions": ["question 1", "question 2", "question 3", "question 4"]
-}"""
-            },
-            {
-                "role": "user",
-                "content": f"Paper abstract: {abstract_text}"
-            }
-        ]
+    result = await suggested_questions_agent.run(
+        f"Paper abstract: {abstract_text}"
     )
-
-    try:
-        parsed = json.loads(response.choices[0].message.content)
-        return parsed["questions"]
-    except Exception:
-        return []
+    return result.output.questions
 
 if __name__ == "__main__":
     from paper import fetch_paper

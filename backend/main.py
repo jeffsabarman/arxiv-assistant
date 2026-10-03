@@ -7,6 +7,8 @@ from paper import fetch_paper
 from chunker import chunk_sections
 from embedder import embed_chunks
 from rag import answer, generate_summary, generate_suggested_questions
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
+from schemas_model import MessageHistory
 
 from schemas_model import (
     LoadPaperResponse,
@@ -51,8 +53,8 @@ async def load_paper(request: LoadPaperRequest):
       chunks = chunk_sections(sections)
       embed_chunks(chunks, arxiv_id)
 
-      summary = generate_summary(arxiv_id)
-      suggested_questions = generate_suggested_questions(arxiv_id)
+      summary = await generate_summary(arxiv_id)
+      suggested_questions = await generate_suggested_questions(arxiv_id)
 
       session["arxiv_id"] = arxiv_id
       session["title"] = metadata.title
@@ -69,6 +71,15 @@ async def load_paper(request: LoadPaperRequest):
     except Exception as e:
        raise HTTPException(status_code=500, detail=str(e))
 
+def convert_history(history: list[MessageHistory]) -> list[ModelMessage]:
+    messages = []
+    for m in history:
+        if m.role == "user":
+            messages.append(ModelRequest(parts=[UserPromptPart(content=m.content)]))
+        elif m.role == "assistant":
+            messages.append(ModelResponse(parts=[TextPart(content=m.content)]))
+    return messages
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     if not session["arxiv_id"]:
@@ -78,13 +89,9 @@ async def chat(request: ChatRequest):
       )
 
     try:
-        # Trim history to last 6 messages
-        trimmed_history = [
-            {"role": m.role, "content": m.content}
-            for m in request.history[-HISTORY_MESSAGES:]
-        ]
+        trimmed_history = convert_history(request.history[-HISTORY_MESSAGES:]) if request.history else []
 
-        result = answer(
+        result = await answer(
                 question=request.question,
                 arxiv_id=session["arxiv_id"],
                 history=trimmed_history

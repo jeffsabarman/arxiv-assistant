@@ -43,3 +43,9 @@ class LLMAnswer(BaseModel):
     found: bool
     answer: str
     citations: list[Citation]
+
+class RewrittenQueries(BaseModel):
+    queries: list[str]
+
+class SuggestedQuestions(BaseModel):
+    questions: list[str]
