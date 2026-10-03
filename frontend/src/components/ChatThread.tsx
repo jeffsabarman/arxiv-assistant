@@ -22,7 +22,7 @@ interface ChatThreadProps {
 
 const ChatThread = ({ messages, loading }: ChatThreadProps) => {
     return (
-        <div className="flex flex-col gap-4 p-4">
+        <div className="flex flex-col gap-4 p-4 pt-2">
             {messages.map((message, index) => (
                 <ChatMessage key={index} message={message} />
             ))}
