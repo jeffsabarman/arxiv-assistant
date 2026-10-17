@@ -3,30 +3,26 @@ from dotenv import load_dotenv
 from embedder import query, get_abstract
 from embedder import QueryResult
 from schemas_model import (AnswerResponse, SourceResponse, Citation, LLMAnswer, 
-                           RewrittenQueries, SuggestedQuestions)
-from pydantic_ai import Agent
+                           RewrittenQueries, SuggestedQuestions, AgentDeps)
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.messages import ModelMessage
 
 load_dotenv()
 
 model = OpenAIChatModel("gpt-4o")
 
-SYSTEM_PROMPT = """You are a research assistant that answers questions about academic papers.
+SYSTEM_PROMPT = """You are a research assistant that helps users understand academic papers.
 
-Rules:
-- Answer ONLY from the provided context chunks
-- If the context contains relevant information to answer the question, set found to true
-- Only set found to false if the context has no relevant information at all
-- Synthesise information from multiple sections when relevant
-- Cite ALL sections your answer draws from
-- Only cite Abstract if no other section covers the question
+- For casual messages or general concepts not in the paper, answer directly without searching
+- Set found to true if you have relevant content, false only if you searched and found nothing
+- Cite ALL sections your answer draws from, avoid Abstract unless no other section covers it
 - Be precise and concise
 
-Formatting rules:
-- Use bullet points or numbered lists for multiple points or findings
-- Use **bold** for key terms and concepts
-- Keep each bullet to 1-2 sentences max
-- Only use a paragraph if the answer is a single, simple point
+Formatting:
+- Bullet points or numbered lists for multiple findings
+- **Bold** key terms, max 1-2 sentences per bullet
+- Only use a paragraph for single simple points
 """
 
 agent = Agent(
@@ -36,8 +32,35 @@ agent = Agent(
     model_settings=OpenAIChatModelSettings(
         max_tokens=1000,
         temperature=0
-    )
+    ),
+    deps_type=AgentDeps
 )
+
+RELEVANCE_THRESHOLD = 0.6
+
+@agent.tool
+async def search_paper(ctx: RunContext[AgentDeps], query: str) -> str:
+    """Search the paper for relevant content. Use this for any question about the paper's methodology, results, findings, or specific details."""
+    results = await query_multi(query, ctx.deps.arxiv_id, n_results=5)
+
+    relevant = [c for c in results.chunks if c.distance < RELEVANCE_THRESHOLD]
+    if not relevant:
+        abstract_chunks = get_abstract(ctx.deps.arxiv_id)
+        existing_text = {c.text for c in results.chunks}
+        for chunk in abstract_chunks:
+            if chunk.text not in existing_text:
+                results.chunks.append(chunk)
+
+    ctx.deps.last_results = results # store for confidence calc
+
+    # debug
+    print("\nRetrieved chunks:")
+    for chunk in results.chunks:
+        print(f"  {chunk.format_section()} | distance: {chunk.distance:.3f}")
+
+    return build_context(results)
+            
+
 
 REWRITE_QUERY_SYSTEM_PROMPT = """Generate 3 different versions of the given question to improve academic paper retrieval.
 Use different vocabulary and phrasing but keep the same meaning.
@@ -63,6 +86,10 @@ def build_confidence(results: QueryResult) -> str:
     else:
         return f"low"
 
+def get_abstract_text(arxiv_id: str) -> str:
+    abstract_chunks = get_abstract(arxiv_id)
+    return " ".join([c.text for c in abstract_chunks])
+
 query_rewriter = Agent(
     model,
     output_type=RewrittenQueries,
@@ -80,8 +107,7 @@ Question to rewrite: {question}"""
 
 async def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> QueryResult:
     # Get abstract text for query rewriting context
-    abstract_chunks = get_abstract(arxiv_id)
-    abstract_text = " ".join([c.text for c in abstract_chunks])
+    abstract_text = get_abstract_text(arxiv_id)
 
     queries = await rewrite_query(question, abstract=abstract_text)
 
@@ -98,45 +124,17 @@ async def query_multi(question: str, arxiv_id: str, n_results: int = 5) -> Query
     all_chunks.sort(key=lambda c: c.distance)
     return QueryResult(chunks=all_chunks[:n_results])
 
-
-RELEVANCE_THRESHOLD = 0.6
-
-async def answer(question: str, arxiv_id: str, history: list[dict] = []) -> AnswerResponse:
-    results = await query_multi(question, arxiv_id, n_results=5)
-
-    relevant = [c for c in results.chunks if c.distance < RELEVANCE_THRESHOLD]
-    if not relevant:
-        abstract_chunks = get_abstract(arxiv_id)
-        existing_text =  {c.text for c in results.chunks}
-        for chunk in abstract_chunks:
-            if chunk.text not in existing_text:
-                results.chunks.append(chunk)
-
-    # debug
-    print("\nRetrieved chunks:")
-    for chunk in results.chunks:
-        print(f"  {chunk.format_section()} | distance: {chunk.distance:.3f}")
-
-    if not results.chunks:
-        return AnswerResponse(
-            answer="I couldn't find any relevant content in this paper.",
-            source=None,
-            confidence="low"
-        )
-    
-    context = build_context(results)
-    confidence = build_confidence(results)
+async def answer(question: str, arxiv_id: str, history: list[ModelMessage] = []) -> AnswerResponse:
+    deps = AgentDeps(arxiv_id=arxiv_id)
 
     result = await agent.run(
-        f"""Context from the paper:
-
-{context}
-
-Question: {question}""",
+        question,
+        deps=deps,
         message_history=history
     )
 
     llm = result.output
+    confidence = build_confidence(deps.last_results) if deps.last_results else None
 
     if not llm.found:
         return AnswerResponse(
@@ -152,16 +150,32 @@ Question: {question}""",
                 Citation(quote=c.quote, section=c.section)
                 for c in llm.citations
             ]
-        ),
+        ) if llm.citations else None,
         confidence=confidence
     )
 
-async def generate_summary(arxiv_id: str) -> str:
-    result = await answer(
-        "Summarise this paper as: one sentence TL;DR, the problem it solves, the approach, and the key findings.",
-        arxiv_id
+summary_agent = Agent(
+    model,
+    output_type=str,
+    system_prompt="""You are an expert research assistant that summarises academic papers.
+You have expertise in identifying the core contributions, methodology, and impact of research.
+Always use markdown formatting with clear sections and **bold** key terms."""
+)
+
+async def generate_summary(arxiv_id: str, title: str = "") -> str:
+    abstract_text = get_abstract_text(arxiv_id)
+    result = await summary_agent.run(
+        f"""Summarise this paper:
+- One sentence TL;DR
+- The problem it solves
+- The approach taken
+- The key findings
+
+Title: {title}
+Abstract: {abstract_text}"""
     )
-    return result.answer
+    return result.output
+
 
 suggested_questions_agent = Agent(
     model,
@@ -176,13 +190,19 @@ Focus on methodology, results, and key contributions.""",
 
 # TODO: user able to add the default question or instruction after upload and question answerd after each upload
 async def generate_suggested_questions(arxiv_id: str) -> list[str]:
-    abstract_chunks = get_abstract(arxiv_id)
-    abstract_text = " ".join([c.text for c in abstract_chunks])
+    abstract_text = get_abstract_text(arxiv_id)
 
     result = await suggested_questions_agent.run(
         f"Paper abstract: {abstract_text}"
     )
     return result.output.questions
+
+_paper_context: str = ""
+
+def set_paper_context(title: str, summary: str) -> None:
+    global _paper_context
+    _paper_context = f"Title: {title}\nSummary: {summary}"
+    agent.system_prompt = f"{SYSTEM_PROMPT}\n\nCurrently loaded paper:\n{_paper_context}"
 
 if __name__ == "__main__":
     from paper import fetch_paper

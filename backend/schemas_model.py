@@ -1,4 +1,11 @@
 from pydantic import BaseModel
+from dataclasses import dataclass, field
+from embedder import QueryResult
+
+@dataclass
+class AgentDeps:
+    arxiv_id: str
+    last_results: QueryResult | None = field(default=None)
 
 class LoadPaperRequest(BaseModel):
     url: str

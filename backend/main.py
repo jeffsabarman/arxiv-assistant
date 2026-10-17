@@ -6,7 +6,7 @@ import os
 from paper import fetch_paper
 from chunker import chunk_sections
 from embedder import embed_chunks
-from rag import answer, generate_summary, generate_suggested_questions
+from rag import answer, generate_summary, generate_suggested_questions, set_paper_context
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
 from schemas_model import MessageHistory
 
@@ -54,6 +54,7 @@ async def load_paper(request: LoadPaperRequest):
       embed_chunks(chunks, arxiv_id)
 
       summary = await generate_summary(arxiv_id)
+      set_paper_context(title=metadata.title, summary=summary)
       suggested_questions = await generate_suggested_questions(arxiv_id)
 
       session["arxiv_id"] = arxiv_id
