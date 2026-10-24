@@ -5,6 +5,8 @@ from embedder import QueryResult
 @dataclass
 class AgentDeps:
     arxiv_id: str
+    title: str = ""
+    summary: str = ""
     last_results: QueryResult | None = field(default=None)
 
 class LoadPaperRequest(BaseModel):

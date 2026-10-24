@@ -8,7 +8,7 @@ from chunker import chunk_sections
 from embedder import embed_chunks
 from rag import answer, generate_summary, generate_suggested_questions, set_paper_context
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
-from schemas_model import MessageHistory
+from schemas_model import MessageHistory, AgentDeps
 
 from schemas_model import (
     LoadPaperResponse,
@@ -39,7 +39,8 @@ session = {
     "arxiv_id": None,
     "title": None,
     "summary": None,
-    "suggested_questions": []
+    "suggested_questions": [],
+    "paper_deps": None
 }
 
 @app.get("/")
@@ -54,13 +55,17 @@ async def load_paper(request: LoadPaperRequest):
       embed_chunks(chunks, arxiv_id)
 
       summary = await generate_summary(arxiv_id)
-      set_paper_context(title=metadata.title, summary=summary)
       suggested_questions = await generate_suggested_questions(arxiv_id)
 
       session["arxiv_id"] = arxiv_id
       session["title"] = metadata.title
       session["summary"] = summary
       session["suggested_questions"] = suggested_questions
+      session["paper_deps"] = AgentDeps(
+          arxiv_id=arxiv_id,
+          title=metadata.title,
+          summary=summary
+      )
 
       return LoadPaperResponse(
          title=metadata.title,
@@ -94,7 +99,7 @@ async def chat(request: ChatRequest):
 
         result = await answer(
                 question=request.question,
-                arxiv_id=session["arxiv_id"],
+                deps=session["paper_deps"],
                 history=trimmed_history
         )
 
