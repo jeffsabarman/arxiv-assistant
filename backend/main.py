@@ -127,6 +127,7 @@ async def reset():
     session["title"] = None
     session["summary"] = None
     session["suggested_questions"] = []
+    session["paper_deps"] = None
     return {"message": "Session reset successfully"}
 
 @app.get("/session", response_model=SessionResponse)
