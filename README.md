@@ -4,6 +4,13 @@ Chat with any ArXiv paper. Paste a link, get a summary and suggested questions, 
 
 **Status:** In development.
 
+## Demo
+
+https://github.com/user-attachments/assets/6af631ac-3c9f-4ae1-adb3-5e92eb50bdb8
+
+
+
+
 ## Features
 
 - **Section-aware parsing:** uses ArXiv's HTML version instead of PDF, so section hierarchy is preserved and every chunk carries its section name.
